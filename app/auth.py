@@ -163,22 +163,19 @@ def auth_callback(request: Request, code: str):
         raise HTTPException(status_code=400, detail=token)
 
     access_token = token["access_token"]
+    refresh_token = token.get("refresh_token")
+
     request.session["access_token"] = access_token
 
     user_claims = token.get("id_token_claims", {})
 
-    name = user_claims.get("name")
-    email = user_claims.get("preferred_username")
-    oid = user_claims.get("oid")
-    tenant = user_claims.get("tid")
-
-    # Encode safely
     query_params = urllib.parse.urlencode({
-        "name": name,
-        "email": email,
-        "oid": oid,
-        "tenant": tenant,
-        "access_token": access_token   # 🔥 sending token to frontend
+        "name": user_claims.get("name"),
+        "email": user_claims.get("preferred_username"),
+        "oid": user_claims.get("oid"),
+        "tenant": user_claims.get("tid"),
+        "access_token": access_token,
+        "refresh_token": refresh_token
     })
 
     return RedirectResponse(
