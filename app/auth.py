@@ -55,6 +55,72 @@
 #         "tenant": user.get("tid"),
 #     }
 
+# from fastapi import APIRouter, HTTPException, Request
+# from fastapi.responses import RedirectResponse
+# import msal
+# import urllib.parse
+# from app.config import CLIENT_ID, CLIENT_SECRET, TENANT_ID, REDIRECT_URI, POWERBI_SCOPE
+
+# router = APIRouter()
+
+# msal_app = msal.ConfidentialClientApplication(
+#     CLIENT_ID,
+#     authority=f"https://login.microsoftonline.com/{TENANT_ID}",
+#     client_credential=CLIENT_SECRET
+# )
+
+# # =========================
+# # LOGIN
+# # =========================
+# @router.get("/login")
+# def login(request: Request):
+#     request.session.clear()
+#     auth_url = msal_app.get_authorization_request_url(
+#         scopes=POWERBI_SCOPE,
+#         redirect_uri=REDIRECT_URI
+#     )
+#     return RedirectResponse(auth_url)
+
+
+# # =========================
+# # CALLBACK
+# # =========================
+# @router.get("/auth/callback")
+# def auth_callback(request: Request, code: str):
+#     token = msal_app.acquire_token_by_authorization_code(
+#         code=code,
+#         scopes=POWERBI_SCOPE,
+#         redirect_uri=REDIRECT_URI
+#     )
+
+#     if "access_token" not in token:
+#         raise HTTPException(status_code=400, detail=token)
+
+#     # Store access token in session
+#     request.session["access_token"] = token["access_token"]
+
+#     # Extract user details from ID token
+#     user_claims = token.get("id_token_claims", {})
+
+#     name = user_claims.get("name")
+#     email = user_claims.get("preferred_username")
+#     oid = user_claims.get("oid")
+#     tenant = user_claims.get("tid")
+
+#     # Encode query parameters safely
+#     query_params = urllib.parse.urlencode({
+#         "name": name,
+#         "email": email,
+#         "oid": oid,
+#         "tenant": tenant
+#     })
+
+#     # Redirect to frontend with user details
+#     return RedirectResponse(
+#         f"https://id-preview--1115fb10-6ea8-4052-8d1b-31238016c02e.lovable.app/powerbi-auth-success?{query_params}"
+#     )
+
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 import msal
@@ -96,10 +162,9 @@ def auth_callback(request: Request, code: str):
     if "access_token" not in token:
         raise HTTPException(status_code=400, detail=token)
 
-    # Store access token in session
-    request.session["access_token"] = token["access_token"]
+    access_token = token["access_token"]
+    request.session["access_token"] = access_token
 
-    # Extract user details from ID token
     user_claims = token.get("id_token_claims", {})
 
     name = user_claims.get("name")
@@ -107,15 +172,15 @@ def auth_callback(request: Request, code: str):
     oid = user_claims.get("oid")
     tenant = user_claims.get("tid")
 
-    # Encode query parameters safely
+    # Encode safely
     query_params = urllib.parse.urlencode({
         "name": name,
         "email": email,
         "oid": oid,
-        "tenant": tenant
+        "tenant": tenant,
+        "access_token": access_token   # 🔥 sending token to frontend
     })
 
-    # Redirect to frontend with user details
     return RedirectResponse(
         f"https://id-preview--1115fb10-6ea8-4052-8d1b-31238016c02e.lovable.app/powerbi-auth-success?{query_params}"
     )

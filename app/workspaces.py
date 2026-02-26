@@ -137,3 +137,4 @@ def add_service_principal_to_workspace(request: Request, payload: dict = Body(..
         )
 
     raise HTTPException(status_code=resp.status_code, detail=error_detail)
+    
