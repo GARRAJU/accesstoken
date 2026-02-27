@@ -295,15 +295,18 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
     workspace_data = create_res.json()
     workspace_id = workspace_data["id"]
 
-    # STEP 2 — Assign to Capacity
-    assign_res = requests.post(
-        f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity",
+    # STEP 2 — Assign to Capacity (PATCH METHOD)
+    assign_res = requests.patch(
+        f"{POWERBI_API}/groups/{workspace_id}",
         headers=headers,
         json={"capacityId": capacity_id},
         timeout=30
     )
 
-    if assign_res.status_code not in (200, 201):
+    print("Assign Status:", assign_res.status_code)
+    print("Assign Response:", assign_res.text)
+
+    if assign_res.status_code not in (200, 202):
         raise HTTPException(
             status_code=assign_res.status_code,
             detail=f"Workspace created but capacity assignment failed: {assign_res.text}"
