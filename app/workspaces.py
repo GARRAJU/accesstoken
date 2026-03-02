@@ -693,81 +693,53 @@ def get_workspaces(request: Request):
 def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
     access_token = request.session.get("access_token")
     if not access_token:
-        raise HTTPException(status_code=401, detail="Not logged in")
+        raise HTTPException(status_code=401, detail="Not logged in via SSO")
 
     workspace_name = payload.get("workspace_name")
-    capacity_id = payload.get("capacity_id")
-
-    if not workspace_name or not capacity_id:
-        raise HTTPException(status_code=400, detail="workspace_name and capacity_id are required")
+    capacity_id = payload.get("capacity_id").strip()
 
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
 
-    # --- STEP 1: Create Workspace (Standard V2) ---
+    # --- STEP 1: Create Workspace ---
     create_res = requests.post(
         f"{POWERBI_API}/groups?workspaceV2=true",
         headers=headers,
-        json={"name": workspace_name},
-        timeout=30
+        json={"name": workspace_name}
     )
+    
     if create_res.status_code not in (200, 201):
-        raise HTTPException(status_code=create_res.status_code, detail=f"Create failed: {create_res.text}")
+        raise HTTPException(status_code=create_res.status_code, detail=f"WS Creation Failed: {create_res.text}")
 
     workspace_id = create_res.json()["id"]
 
-    # --- STEP 2: Assign to Fabric Capacity ---
-    # We use a dedicated assignment endpoint. 
-    # Note: If this fails with 401/403, your token doesn't have Capacity Admin rights.
-    assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
-    assign_payload = {"capacityId": capacity_id}
+    # --- STEP 2: Assign to Capacity (The 403 Danger Zone) ---
+    # We wait 5 seconds because SSO tokens sometimes have a propagation delay 
+    # when hitting the Capacity engine vs the Workspace engine.
+    time.sleep(5) 
     
-    assigned_successfully = False
-    for attempt in range(3):
-        time.sleep(3) # Increased sleep to allow the new group to propagate in Azure AD
-        res = requests.post(assign_url, headers=headers, json=assign_payload, timeout=30)
-        
-        if res.status_code in (200, 201, 202):
-            assigned_successfully = True
-            break
-            
-    if not assigned_successfully:
-        # If AssignToCapacity fails, the workspace remains "Pro"
-        raise HTTPException(
-            status_code=500, 
-            detail="Failed to bind capacity. Ensure you are an Admin on the Fabric Capacity tab in the Admin Portal."
-        )
+    assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
+    res = requests.post(assign_url, headers=headers, json={"capacityId": capacity_id})
 
-    # --- STEP 3: Verification with SKU Detection ---
-    is_verified = False
-    for i in range(5):
-        time.sleep(2)
-        # We fetch the specific group to check its properties
-        verify_res = requests.get(f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'", headers=headers)
+    if res.status_code == 403:
+        # Check if the user can even see the capacity they claim to own
+        cap_check = requests.get(f"{POWERBI_API}/capacities", headers=headers)
+        if cap_check.status_code == 403:
+            detail_msg = "403: Your SSO token lacks 'Capacity.ReadWrite.All' scope. Please re-login."
+        else:
+            detail_msg = f"403: You are logged in, but not recognized as an Admin for Capacity {capacity_id}."
         
-        if verify_res.status_code == 200:
-            val = verify_res.json().get("value", [])
-            if val:
-                current_cap = val[0].get("capacityId", "").lower()
-                # Check if the capacityId is now correctly set
-                if current_cap == capacity_id.lower():
-                    is_verified = True
-                    break
-        
-    if not is_verified:
-        raise HTTPException(
-            status_code=500, 
-            detail="Workspace exists, but capacity assignment could not be verified."
-        )
+        raise HTTPException(status_code=403, detail=detail_msg)
+
+    if res.status_code not in (200, 201, 202):
+        raise HTTPException(status_code=res.status_code, detail=f"Assignment Failed: {res.text}")
 
     return {
-        "message": "Successfully created Fabric-backed workspace",
+        "message": "Fabric Workspace successfully created",
         "workspaceId": workspace_id,
-        "workspaceName": workspace_name,
-        "capacityId": capacity_id,
-        "status": "Dedicated Capacity Active"
+        "capacityId": capacity_id
     }
 # ------------------------------------------------------------
 # 4️⃣ ADD SERVICE PRINCIPAL TO WORKSPACE
