@@ -618,6 +618,78 @@ def get_workspaces(request: Request):
 # 3️⃣ CREATE WORKSPACE + GUARANTEED CAPACITY ASSIGNMENT
 # ------------------------------------------------------------
 @router.post("/workspaces/with-capacity")
+# def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
+#     access_token = request.session.get("access_token")
+#     if not access_token:
+#         raise HTTPException(status_code=401, detail="Not logged in")
+
+#     workspace_name = payload.get("workspace_name")
+#     capacity_id = payload.get("capacity_id")
+
+#     if not workspace_name or not capacity_id:
+#         raise HTTPException(status_code=400, detail="workspace_name and capacity_id are required")
+
+#     headers = {
+#         "Authorization": f"Bearer {access_token}",
+#         "Content-Type": "application/json"
+#     }
+
+#     # --- STEP 1: Create Workspace ---
+#     create_res = requests.post(
+#         f"{POWERBI_API}/groups?workspaceV2=true",
+#         headers=headers,
+#         json={"name": workspace_name},
+#         timeout=30
+#     )
+#     if create_res.status_code not in (200, 201):
+#         raise HTTPException(status_code=create_res.status_code, detail=create_res.text)
+
+#     workspace_id = create_res.json()["id"]
+
+#     # --- STEP 2: Assign to Capacity (Retry Logic) ---
+#     assigned_successfully = False
+#     for attempt in range(3):
+#         time.sleep(2) # Give Azure time to propagate the new group
+        
+#         # Try AssignToCapacity Action
+#         assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
+#         res = requests.post(assign_url, headers=headers, json={"capacityId": capacity_id}, timeout=30)
+        
+#         # Fallback to PATCH if POST isn't supported by the tenant configuration
+#         if res.status_code not in (200, 201, 202):
+#             res = requests.patch(f"{POWERBI_API}/groups/{workspace_id}", headers=headers, json={"capacityId": capacity_id}, timeout=30)
+        
+#         if res.status_code in (200, 201, 202):
+#             assigned_successfully = True
+#             break
+
+#     # --- STEP 3: Verification Polling ---
+#     is_verified = False
+#     for i in range(5):
+#         time.sleep(3)
+#         # Using $filter to check specifically for our new workspace
+#         verify_res = requests.get(f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'", headers=headers)
+        
+#         if verify_res.status_code == 200:
+#             val = verify_res.json().get("value", [])
+#             if val:
+#                 current_cap = val[0].get("capacityId", "").lower()
+#                 if current_cap == capacity_id.lower():
+#                     is_verified = True
+#                     break
+        
+#     if not is_verified:
+#         raise HTTPException(
+#             status_code=500, 
+#             detail=f"Workspace created, but capacity assignment timed out. Ensure the user is a 'Capacity Admin' for: {capacity_id}"
+#         )
+
+#     return {
+#         "message": "Workspace successfully assigned to Fabric capacity",
+#         "workspaceId": workspace_id,
+#         "workspaceName": workspace_name,
+#         "capacityId": capacity_id
+#     }
 def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
     access_token = request.session.get("access_token")
     if not access_token:
@@ -634,7 +706,7 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
         "Content-Type": "application/json"
     }
 
-    # --- STEP 1: Create Workspace ---
+    # --- STEP 1: Create Workspace (Standard V2) ---
     create_res = requests.post(
         f"{POWERBI_API}/groups?workspaceV2=true",
         headers=headers,
@@ -642,38 +714,44 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
         timeout=30
     )
     if create_res.status_code not in (200, 201):
-        raise HTTPException(status_code=create_res.status_code, detail=create_res.text)
+        raise HTTPException(status_code=create_res.status_code, detail=f"Create failed: {create_res.text}")
 
     workspace_id = create_res.json()["id"]
 
-    # --- STEP 2: Assign to Capacity (Retry Logic) ---
+    # --- STEP 2: Assign to Fabric Capacity ---
+    # We use a dedicated assignment endpoint. 
+    # Note: If this fails with 401/403, your token doesn't have Capacity Admin rights.
+    assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
+    assign_payload = {"capacityId": capacity_id}
+    
     assigned_successfully = False
     for attempt in range(3):
-        time.sleep(2) # Give Azure time to propagate the new group
-        
-        # Try AssignToCapacity Action
-        assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
-        res = requests.post(assign_url, headers=headers, json={"capacityId": capacity_id}, timeout=30)
-        
-        # Fallback to PATCH if POST isn't supported by the tenant configuration
-        if res.status_code not in (200, 201, 202):
-            res = requests.patch(f"{POWERBI_API}/groups/{workspace_id}", headers=headers, json={"capacityId": capacity_id}, timeout=30)
+        time.sleep(3) # Increased sleep to allow the new group to propagate in Azure AD
+        res = requests.post(assign_url, headers=headers, json=assign_payload, timeout=30)
         
         if res.status_code in (200, 201, 202):
             assigned_successfully = True
             break
+            
+    if not assigned_successfully:
+        # If AssignToCapacity fails, the workspace remains "Pro"
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to bind capacity. Ensure you are an Admin on the Fabric Capacity tab in the Admin Portal."
+        )
 
-    # --- STEP 3: Verification Polling ---
+    # --- STEP 3: Verification with SKU Detection ---
     is_verified = False
     for i in range(5):
-        time.sleep(3)
-        # Using $filter to check specifically for our new workspace
+        time.sleep(2)
+        # We fetch the specific group to check its properties
         verify_res = requests.get(f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'", headers=headers)
         
         if verify_res.status_code == 200:
             val = verify_res.json().get("value", [])
             if val:
                 current_cap = val[0].get("capacityId", "").lower()
+                # Check if the capacityId is now correctly set
                 if current_cap == capacity_id.lower():
                     is_verified = True
                     break
@@ -681,16 +759,16 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
     if not is_verified:
         raise HTTPException(
             status_code=500, 
-            detail=f"Workspace created, but capacity assignment timed out. Ensure the user is a 'Capacity Admin' for: {capacity_id}"
+            detail="Workspace exists, but capacity assignment could not be verified."
         )
 
     return {
-        "message": "Workspace successfully assigned to Fabric capacity",
+        "message": "Successfully created Fabric-backed workspace",
         "workspaceId": workspace_id,
         "workspaceName": workspace_name,
-        "capacityId": capacity_id
+        "capacityId": capacity_id,
+        "status": "Dedicated Capacity Active"
     }
-
 # ------------------------------------------------------------
 # 4️⃣ ADD SERVICE PRINCIPAL TO WORKSPACE
 # ------------------------------------------------------------
