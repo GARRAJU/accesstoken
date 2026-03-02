@@ -41,14 +41,27 @@ EMPTY_PBIX_NAME = os.getenv("EMPTY_PBIX_NAME")
  
 # Updated scopes – includes legacy Power BI + required Fabric Core scopes for capacity assignment
 
+# POWERBI_SCOPE = [
+
+#     "https://analysis.windows.net/powerbi/api/.default",  # Legacy Power BI REST API (keep for other calls)
+
+#     "Capacity.ReadWrite.All",                             # Required for assign workspace to capacity
+
+#     "Workspace.ReadWrite.All"                             # Required for workspace read/write operations
+
+# ]
+# --- FIXED SCOPES ---
+# We remove ".default" and use the full URL for the specific scopes.
+# This ensures the token is valid for both Power BI and Fabric assignment.
+
 POWERBI_SCOPE = [
-
-    "https://analysis.windows.net/powerbi/api/.default",  # Legacy Power BI REST API (keep for other calls)
-
-    "Capacity.ReadWrite.All",                             # Required for assign workspace to capacity
-
-    "Workspace.ReadWrite.All"                             # Required for workspace read/write operations
-
+    "https://analysis.windows.net/powerbi/api/Capacity.ReadWrite.All",
+    "https://analysis.windows.net/powerbi/api/Workspace.ReadWrite.All",
+    "https://analysis.windows.net/powerbi/api/Report.ReadWrite.All", # Added for your /workspaces GET call
+    "https://analysis.windows.net/powerbi/api/Dataset.ReadWrite.All", # Added for your /workspaces GET call
+    "openid",
+    "profile",
+    "offline_access"
 ]
  
 # Legacy Power BI API base (used for create workspace, list capacities, etc.)
