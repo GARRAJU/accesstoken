@@ -547,228 +547,577 @@
 #     raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
 
-import os
-import time
-import requests
-from fastapi import APIRouter, Request, HTTPException, Body
-from app.config import POWERBI_API
+# import os
+# import time
+# import requests
+# from fastapi import APIRouter, Request, HTTPException, Body
+# from app.config import POWERBI_API
 
-router = APIRouter()
+# router = APIRouter()
 
-# --- CONFIGURATION ---
-# This is the Object ID of the Service Principal you want to add to workspaces
-SP_OBJECT_ID = os.getenv("SP_OBJECT_ID", "36d789fd-926b-4106-93dc-e3928b36913e")
+# # --- CONFIGURATION ---
+# # This is the Object ID of the Service Principal you want to add to workspaces
+# SP_OBJECT_ID = os.getenv("SP_OBJECT_ID", "36d789fd-926b-4106-93dc-e3928b36913e")
 
-# ------------------------------------------------------------
-# 1️⃣ GET USER CAPACITIES
-# ------------------------------------------------------------
-@router.get("/user-capacities")
-def get_user_capacities(request: Request):
-    access_token = request.session.get("access_token")
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Not logged in")
-
-    response = requests.get(
-        f"{POWERBI_API}/capacities",
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=30
-    )
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=response.text)
-
-    return response.json()
-
-# ------------------------------------------------------------
-# 2️⃣ GET WORKSPACES (WITH ENRICHED DATA)
-# ------------------------------------------------------------
-@router.get("/workspaces")
-def get_workspaces(request: Request):
-    access_token = request.session.get("access_token")
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Not logged in")
-
-    headers = {"Authorization": f"Bearer {access_token}"}
-    
-    # Fetch all workspaces (groups) the user has access to
-    ws_resp = requests.get(f"{POWERBI_API}/groups", headers=headers, timeout=30)
-
-    if ws_resp.status_code != 200:
-        raise HTTPException(status_code=ws_resp.status_code, detail=ws_resp.text)
-
-    workspaces = ws_resp.json().get("value", [])
-
-    # Enrich each workspace with its associated Reports and Datasets
-    for ws in workspaces:
-        workspace_id = ws["id"]
-        
-        # Get Reports
-        r_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/reports", headers=headers, timeout=15)
-        ws["reports"] = r_resp.json().get("value", []) if r_resp.status_code == 200 else []
-        
-        # Get Datasets
-        d_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/datasets", headers=headers, timeout=15)
-        ws["datasets"] = d_resp.json().get("value", []) if d_resp.status_code == 200 else []
-
-    return {
-        "count": len(workspaces),
-        "workspaces": workspaces
-    }
-
-# ------------------------------------------------------------
-# 3️⃣ CREATE WORKSPACE + GUARANTEED CAPACITY ASSIGNMENT
-# ------------------------------------------------------------
-@router.post("/workspaces/with-capacity")
-# def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
+# # ------------------------------------------------------------
+# # 1️⃣ GET USER CAPACITIES
+# # ------------------------------------------------------------
+# @router.get("/user-capacities")
+# def get_user_capacities(request: Request):
 #     access_token = request.session.get("access_token")
 #     if not access_token:
 #         raise HTTPException(status_code=401, detail="Not logged in")
 
-#     workspace_name = payload.get("workspace_name")
-#     capacity_id = payload.get("capacity_id")
+#     response = requests.get(
+#         f"{POWERBI_API}/capacities",
+#         headers={"Authorization": f"Bearer {access_token}"},
+#         timeout=30
+#     )
+#     if response.status_code != 200:
+#         raise HTTPException(status_code=response.status_code, detail=response.text)
 
-#     if not workspace_name or not capacity_id:
-#         raise HTTPException(status_code=400, detail="workspace_name and capacity_id are required")
+#     return response.json()
 
+# # ------------------------------------------------------------
+# # 2️⃣ GET WORKSPACES (WITH ENRICHED DATA)
+# # ------------------------------------------------------------
+# @router.get("/workspaces")
+# def get_workspaces(request: Request):
+#     access_token = request.session.get("access_token")
+#     if not access_token:
+#         raise HTTPException(status_code=401, detail="Not logged in")
+
+#     headers = {"Authorization": f"Bearer {access_token}"}
+    
+#     # Fetch all workspaces (groups) the user has access to
+#     ws_resp = requests.get(f"{POWERBI_API}/groups", headers=headers, timeout=30)
+
+#     if ws_resp.status_code != 200:
+#         raise HTTPException(status_code=ws_resp.status_code, detail=ws_resp.text)
+
+#     workspaces = ws_resp.json().get("value", [])
+
+#     # Enrich each workspace with its associated Reports and Datasets
+#     for ws in workspaces:
+#         workspace_id = ws["id"]
+        
+#         # Get Reports
+#         r_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/reports", headers=headers, timeout=15)
+#         ws["reports"] = r_resp.json().get("value", []) if r_resp.status_code == 200 else []
+        
+#         # Get Datasets
+#         d_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/datasets", headers=headers, timeout=15)
+#         ws["datasets"] = d_resp.json().get("value", []) if d_resp.status_code == 200 else []
+
+#     return {
+#         "count": len(workspaces),
+#         "workspaces": workspaces
+#     }
+
+# # ------------------------------------------------------------
+# # 3️⃣ CREATE WORKSPACE + GUARANTEED CAPACITY ASSIGNMENT
+# # ------------------------------------------------------------
+# @router.post("/workspaces/with-capacity")
+# # def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
+# #     access_token = request.session.get("access_token")
+# #     if not access_token:
+# #         raise HTTPException(status_code=401, detail="Not logged in")
+
+# #     workspace_name = payload.get("workspace_name")
+# #     capacity_id = payload.get("capacity_id")
+
+# #     if not workspace_name or not capacity_id:
+# #         raise HTTPException(status_code=400, detail="workspace_name and capacity_id are required")
+
+# #     headers = {
+# #         "Authorization": f"Bearer {access_token}",
+# #         "Content-Type": "application/json"
+# #     }
+
+# #     # --- STEP 1: Create Workspace ---
+# #     create_res = requests.post(
+# #         f"{POWERBI_API}/groups?workspaceV2=true",
+# #         headers=headers,
+# #         json={"name": workspace_name},
+# #         timeout=30
+# #     )
+# #     if create_res.status_code not in (200, 201):
+# #         raise HTTPException(status_code=create_res.status_code, detail=create_res.text)
+
+# #     workspace_id = create_res.json()["id"]
+
+# #     # --- STEP 2: Assign to Capacity (Retry Logic) ---
+# #     assigned_successfully = False
+# #     for attempt in range(3):
+# #         time.sleep(2) # Give Azure time to propagate the new group
+        
+# #         # Try AssignToCapacity Action
+# #         assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
+# #         res = requests.post(assign_url, headers=headers, json={"capacityId": capacity_id}, timeout=30)
+        
+# #         # Fallback to PATCH if POST isn't supported by the tenant configuration
+# #         if res.status_code not in (200, 201, 202):
+# #             res = requests.patch(f"{POWERBI_API}/groups/{workspace_id}", headers=headers, json={"capacityId": capacity_id}, timeout=30)
+        
+# #         if res.status_code in (200, 201, 202):
+# #             assigned_successfully = True
+# #             break
+
+# #     # --- STEP 3: Verification Polling ---
+# #     is_verified = False
+# #     for i in range(5):
+# #         time.sleep(3)
+# #         # Using $filter to check specifically for our new workspace
+# #         verify_res = requests.get(f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'", headers=headers)
+        
+# #         if verify_res.status_code == 200:
+# #             val = verify_res.json().get("value", [])
+# #             if val:
+# #                 current_cap = val[0].get("capacityId", "").lower()
+# #                 if current_cap == capacity_id.lower():
+# #                     is_verified = True
+# #                     break
+        
+# #     if not is_verified:
+# #         raise HTTPException(
+# #             status_code=500, 
+# #             detail=f"Workspace created, but capacity assignment timed out. Ensure the user is a 'Capacity Admin' for: {capacity_id}"
+# #         )
+
+# #     return {
+# #         "message": "Workspace successfully assigned to Fabric capacity",
+# #         "workspaceId": workspace_id,
+# #         "workspaceName": workspace_name,
+# #         "capacityId": capacity_id
+# #     }
+# def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
+#     access_token = request.session.get("access_token")
 #     headers = {
 #         "Authorization": f"Bearer {access_token}",
 #         "Content-Type": "application/json"
 #     }
 
-#     # --- STEP 1: Create Workspace ---
+#     workspace_name = payload.get("workspace_name")
+#     capacity_id = payload.get("capacity_id").strip()
+
+#     # --- STEP 1: Create the Workspace ---
 #     create_res = requests.post(
 #         f"{POWERBI_API}/groups?workspaceV2=true",
 #         headers=headers,
-#         json={"name": workspace_name},
-#         timeout=30
+#         json={"name": workspace_name}
 #     )
 #     if create_res.status_code not in (200, 201):
-#         raise HTTPException(status_code=create_res.status_code, detail=create_res.text)
+#         raise HTTPException(status_code=create_res.status_code, detail=f"WS Creation Failed: {create_res.text}")
 
 #     workspace_id = create_res.json()["id"]
 
-#     # --- STEP 2: Assign to Capacity (Retry Logic) ---
-#     assigned_successfully = False
-#     for attempt in range(3):
-#         time.sleep(2) # Give Azure time to propagate the new group
-        
-#         # Try AssignToCapacity Action
-#         assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
-#         res = requests.post(assign_url, headers=headers, json={"capacityId": capacity_id}, timeout=30)
-        
-#         # Fallback to PATCH if POST isn't supported by the tenant configuration
-#         if res.status_code not in (200, 201, 202):
-#             res = requests.patch(f"{POWERBI_API}/groups/{workspace_id}", headers=headers, json={"capacityId": capacity_id}, timeout=30)
-        
-#         if res.status_code in (200, 201, 202):
-#             assigned_successfully = True
+#     # --- STEP 2: The "Wait & Verify" Loop ---
+#     # We don't just sleep; we wait until the API confirms the workspace is ready
+#     ready = False
+#     for _ in range(5):
+#         time.sleep(3) # Wait 3 seconds per attempt
+#         check = requests.get(f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'", headers=headers)
+#         if check.status_code == 200 and len(check.json().get("value", [])) > 0:
+#             ready = True
 #             break
+    
+#     if not ready:
+#         raise HTTPException(status_code=500, detail="Workspace created but not reachable in time.")
 
-#     # --- STEP 3: Verification Polling ---
-#     is_verified = False
-#     for i in range(5):
-#         time.sleep(3)
-#         # Using $filter to check specifically for our new workspace
-#         verify_res = requests.get(f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'", headers=headers)
-        
-#         if verify_res.status_code == 200:
-#             val = verify_res.json().get("value", [])
-#             if val:
-#                 current_cap = val[0].get("capacityId", "").lower()
-#                 if current_cap == capacity_id.lower():
-#                     is_verified = True
-#                     break
-        
-#     if not is_verified:
+#     # --- STEP 3: Assign to Capacity ---
+#     # Using the exact ID from your successful Capacity response
+#     assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
+#     assign_payload = {"capacityId": capacity_id}
+    
+#     # Perform the assignment
+#     res = requests.post(assign_url, headers=headers, json=assign_payload)
+
+#     # --- DEBUGGING THE 401/403 ---
+#     if res.status_code not in (200, 201, 202):
+#         # We need to see what Power BI is actually complaining about
+#         error_info = res.text
+#         print(f"FAILED ASSIGNMENT: Status {res.status_code}, Body: {error_info}")
 #         raise HTTPException(
-#             status_code=500, 
-#             detail=f"Workspace created, but capacity assignment timed out. Ensure the user is a 'Capacity Admin' for: {capacity_id}"
+#             status_code=res.status_code, 
+#             detail=f"Assignment Failed. PBI Error: {error_info}"
 #         )
 
 #     return {
-#         "message": "Workspace successfully assigned to Fabric capacity",
+#         "status": "success",
 #         "workspaceId": workspace_id,
-#         "workspaceName": workspace_name,
-#         "capacityId": capacity_id
+#         "message": f"Assigned to capacity {capacity_id} (SKU: F2)"
 #     }
-def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
-    access_token = request.session.get("access_token")
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    workspace_name = payload.get("workspace_name")
-    capacity_id = payload.get("capacity_id").strip()
-
-    # --- STEP 1: Create the Workspace ---
-    create_res = requests.post(
-        f"{POWERBI_API}/groups?workspaceV2=true",
-        headers=headers,
-        json={"name": workspace_name}
-    )
-    if create_res.status_code not in (200, 201):
-        raise HTTPException(status_code=create_res.status_code, detail=f"WS Creation Failed: {create_res.text}")
-
-    workspace_id = create_res.json()["id"]
-
-    # --- STEP 2: The "Wait & Verify" Loop ---
-    # We don't just sleep; we wait until the API confirms the workspace is ready
-    ready = False
-    for _ in range(5):
-        time.sleep(3) # Wait 3 seconds per attempt
-        check = requests.get(f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'", headers=headers)
-        if check.status_code == 200 and len(check.json().get("value", [])) > 0:
-            ready = True
-            break
+# # ------------------------------------------------------------
+# # 4️⃣ ADD SERVICE PRINCIPAL TO WORKSPACE
+# # ------------------------------------------------------------
+# @router.post("/workspaces/add-sp")
+# def add_service_principal_to_workspace(request: Request, payload: dict = Body(...)):
+#     access_token = request.session.get("access_token")
+#     workspace_id = payload.get("workspace_id")
     
-    if not ready:
-        raise HTTPException(status_code=500, detail="Workspace created but not reachable in time.")
+#     if not access_token or not workspace_id:
+#         raise HTTPException(status_code=400, detail="Missing parameters")
 
-    # --- STEP 3: Assign to Capacity ---
-    # Using the exact ID from your successful Capacity response
-    assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
-    assign_payload = {"capacityId": capacity_id}
+#     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     
-    # Perform the assignment
-    res = requests.post(assign_url, headers=headers, json=assign_payload)
+#     add_payload = {
+#         "identifier": SP_OBJECT_ID, 
+#         "principalType": "App", 
+#         "groupUserAccessRight": "Admin"
+#     }
 
-    # --- DEBUGGING THE 401/403 ---
-    if res.status_code not in (200, 201, 202):
-        # We need to see what Power BI is actually complaining about
-        error_info = res.text
-        print(f"FAILED ASSIGNMENT: Status {res.status_code}, Body: {error_info}")
-        raise HTTPException(
-            status_code=res.status_code, 
-            detail=f"Assignment Failed. PBI Error: {error_info}"
-        )
-
-    return {
-        "status": "success",
-        "workspaceId": workspace_id,
-        "message": f"Assigned to capacity {capacity_id} (SKU: F2)"
-    }
-# ------------------------------------------------------------
-# 4️⃣ ADD SERVICE PRINCIPAL TO WORKSPACE
-# ------------------------------------------------------------
-@router.post("/workspaces/add-sp")
-def add_service_principal_to_workspace(request: Request, payload: dict = Body(...)):
-    access_token = request.session.get("access_token")
-    workspace_id = payload.get("workspace_id")
+#     resp = requests.post(f"{POWERBI_API}/groups/{workspace_id}/users", headers=headers, json=add_payload)
     
-    if not access_token or not workspace_id:
-        raise HTTPException(status_code=400, detail="Missing parameters")
-
-    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-    
-    add_payload = {
-        "identifier": SP_OBJECT_ID, 
-        "principalType": "App", 
-        "groupUserAccessRight": "Admin"
-    }
-
-    resp = requests.post(f"{POWERBI_API}/groups/{workspace_id}/users", headers=headers, json=add_payload)
-    
-    if resp.status_code in (200, 201, 204):
-        return {"status": "success", "message": "Service Principal added as Admin"}
+#     if resp.status_code in (200, 201, 204):
+#         return {"status": "success", "message": "Service Principal added as Admin"}
         
+#     raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+
+
+import os
+
+import time
+
+import requests
+
+from fastapi import APIRouter, Request, HTTPException, Body
+
+from app.config import POWERBI_API  # Assuming this is "https://api.powerbi.com/v1.0/myorg"
+
+from typing import Dict
+ 
+router = APIRouter()
+ 
+# --- CONFIGURATION ---
+
+SP_OBJECT_ID = os.getenv("SP_OBJECT_ID", "36d789fd-926b-4106-93dc-e3928b36913e")
+ 
+# Modern Fabric Core API base (preferred for Fabric tenants in 2026)
+
+FABRIC_API = "https://api.fabric.microsoft.com/v1"
+ 
+ 
+# ------------------------------------------------------------
+
+# 1️⃣ GET USER CAPACITIES
+
+# ------------------------------------------------------------
+
+@router.get("/user-capacities")
+
+def get_user_capacities(request: Request):
+
+    """Returns capacities the authenticated user can see/assign to."""
+
+    access_token = request.session.get("access_token")
+
+    if not access_token:
+
+        raise HTTPException(status_code=401, detail="Not logged in")
+ 
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    response = requests.get(f"{POWERBI_API}/capacities", headers=headers, timeout=30)
+ 
+    if response.status_code != 200:
+
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+ 
+    return response.json()
+ 
+ 
+# ------------------------------------------------------------
+
+# 2️⃣ GET WORKSPACES (WITH ENRICHED DATA)
+
+# ------------------------------------------------------------
+
+@router.get("/workspaces")
+
+def get_workspaces(request: Request):
+
+    """Lists all accessible workspaces enriched with reports & datasets."""
+
+    access_token = request.session.get("access_token")
+
+    if not access_token:
+
+        raise HTTPException(status_code=401, detail="Not logged in")
+ 
+    headers = {"Authorization": f"Bearer {access_token}"}
+ 
+    ws_resp = requests.get(f"{POWERBI_API}/groups", headers=headers, timeout=30)
+
+    if ws_resp.status_code != 200:
+
+        raise HTTPException(status_code=ws_resp.status_code, detail=ws_resp.text)
+ 
+    workspaces = ws_resp.json().get("value", [])
+ 
+    for ws in workspaces:
+
+        workspace_id = ws["id"]
+ 
+        # Reports
+
+        r_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/reports", headers=headers, timeout=15)
+
+        ws["reports"] = r_resp.json().get("value", []) if r_resp.status_code == 200 else []
+ 
+        # Datasets
+
+        d_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/datasets", headers=headers, timeout=15)
+
+        ws["datasets"] = d_resp.json().get("value", []) if d_resp.status_code == 200 else []
+ 
+    return {"count": len(workspaces), "workspaces": workspaces}
+ 
+ 
+# ------------------------------------------------------------
+
+# 3️⃣ CREATE WORKSPACE + GUARANTEED CAPACITY ASSIGNMENT
+
+# ------------------------------------------------------------
+
+@router.post("/workspaces/with-capacity")
+
+def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
+
+    """
+
+    Creates a new workspace and assigns it to the specified Fabric/Premium capacity.
+
+    Handles propagation delays with retries and extended polling.
+
+    """
+
+    access_token = request.session.get("access_token")
+
+    if not access_token:
+
+        raise HTTPException(status_code=401, detail="Not logged in")
+ 
+    workspace_name = payload.get("workspace_name")
+
+    capacity_id = payload.get("capacity_id")
+
+    if not workspace_name or not capacity_id:
+
+        raise HTTPException(status_code=400, detail="workspace_name and capacity_id are required")
+ 
+    headers = {
+
+        "Authorization": f"Bearer {access_token}",
+
+        "Content-Type": "application/json"
+
+    }
+ 
+    # --- STEP 1: Create Workspace ---
+
+    # Use legacy Power BI endpoint for creation (Fabric create supports capacityId but may not be GA everywhere yet)
+
+    create_res = requests.post(
+
+        f"{POWERBI_API}/groups?workspaceV2=true",
+
+        headers=headers,
+
+        json={"name": workspace_name},
+
+        timeout=30
+
+    )
+ 
+    if create_res.status_code not in (200, 201):
+
+        raise HTTPException(
+
+            status_code=create_res.status_code,
+
+            detail=f"Workspace creation failed: {create_res.text}"
+
+        )
+ 
+    workspace_id = create_res.json()["id"]
+ 
+    # Critical: Give service time to make the workspace assignable
+
+    time.sleep(10)  # 10–15s is often needed; adjust higher if still failing
+ 
+    # --- STEP 2: Assign to Capacity with exponential backoff ---
+
+    assign_success = False
+
+    assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"  # or FABRIC_API/workspaces/{workspace_id}/assignToCapacity
+ 
+    for attempt in range(7):  # 0..6 → up to ~90s total backoff
+
+        if attempt > 0:
+
+            sleep_time = 5 * (2 ** (attempt - 1))  # 5s → 10s → 20s → 40s → ...
+
+            time.sleep(sleep_time)
+ 
+        assign_res = requests.post(
+
+            assign_url,
+
+            headers=headers,
+
+            json={"capacityId": capacity_id},
+
+            timeout=40
+
+        )
+ 
+        if assign_res.status_code in (200, 202):  # 202 = Accepted (async)
+
+            assign_success = True
+
+            break
+ 
+        print(f"Assign attempt {attempt+1} → {assign_res.status_code}: {assign_res.text[:200]}")
+ 
+        if assign_res.status_code in (401, 403):
+
+            raise HTTPException(
+
+                status_code=403,
+
+                detail="Capacity assignment permission denied. Ensure user/SP is Capacity Admin/Contributor."
+
+            )
+
+        if assign_res.status_code == 404:
+
+            continue  # still propagating
+ 
+    if not assign_success:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=f"Capacity assignment failed after retries (last: {assign_res.status_code} - {assign_res.text[:300]})"
+
+        )
+ 
+    # --- STEP 3: Extended Polling for Verification ---
+
+    verified = False
+
+    expected_cap_lower = capacity_id.lower()
+ 
+    for poll in range(30):  # 30 × 4s = 120s max polling
+
+        time.sleep(4)
+ 
+        verify_res = requests.get(
+
+            f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'",
+
+            headers=headers,
+
+            timeout=20
+
+        )
+ 
+        if verify_res.status_code == 200:
+
+            groups = verify_res.json().get("value", [])
+
+            if groups:
+
+                current_cap = groups[0].get("capacityId", "").lower()
+
+                if current_cap == expected_cap_lower and current_cap:
+
+                    verified = True
+
+                    break
+ 
+    if not verified:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=(
+
+                f"Workspace '{workspace_name}' (ID: {workspace_id}) created, "
+
+                f"but assignment to capacity '{capacity_id}' not confirmed after polling. "
+
+                "Likely causes: missing Capacity Admin rights, very long propagation, "
+
+                "or tenant-specific delay. Verify manually in Fabric UI."
+
+            )
+
+        )
+ 
+    return {
+
+        "message": "Workspace created and assigned to Fabric/Premium capacity",
+
+        "workspaceId": workspace_id,
+
+        "workspaceName": workspace_name,
+
+        "capacityId": capacity_id
+
+    }
+ 
+ 
+# ------------------------------------------------------------
+
+# 4️⃣ ADD SERVICE PRINCIPAL TO WORKSPACE
+
+# ------------------------------------------------------------
+
+@router.post("/workspaces/add-sp")
+
+def add_service_principal_to_workspace(request: Request, payload: Dict = Body(...)):
+
+    """Adds the configured Service Principal as Admin to the workspace."""
+
+    access_token = request.session.get("access_token")
+
+    workspace_id = payload.get("workspace_id")
+ 
+    if not access_token or not workspace_id:
+
+        raise HTTPException(status_code=400, detail="access_token or workspace_id missing")
+ 
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+ 
+    add_payload = {
+
+        "identifier": SP_OBJECT_ID,
+
+        "principalType": "App",
+
+        "groupUserAccessRight": "Admin"
+
+    }
+ 
+    resp = requests.post(
+
+        f"{POWERBI_API}/groups/{workspace_id}/users",
+
+        headers=headers,
+
+        json=add_payload,
+
+        timeout=20
+
+    )
+ 
+    if resp.status_code in (200, 201, 204):
+
+        return {"status": "success", "message": "Service Principal added as Admin"}
+ 
     raise HTTPException(status_code=resp.status_code, detail=resp.text)
+ 
