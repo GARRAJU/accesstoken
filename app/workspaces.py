@@ -692,54 +692,60 @@ def get_workspaces(request: Request):
 #     }
 def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
     access_token = request.session.get("access_token")
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Not logged in via SSO")
-
-    workspace_name = payload.get("workspace_name")
-    capacity_id = payload.get("capacity_id").strip()
-
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
 
-    # --- STEP 1: Create Workspace ---
+    workspace_name = payload.get("workspace_name")
+    capacity_id = payload.get("capacity_id").strip()
+
+    # --- STEP 1: Create the Workspace ---
     create_res = requests.post(
         f"{POWERBI_API}/groups?workspaceV2=true",
         headers=headers,
         json={"name": workspace_name}
     )
-    
     if create_res.status_code not in (200, 201):
         raise HTTPException(status_code=create_res.status_code, detail=f"WS Creation Failed: {create_res.text}")
 
     workspace_id = create_res.json()["id"]
 
-    # --- STEP 2: Assign to Capacity (The 403 Danger Zone) ---
-    # We wait 5 seconds because SSO tokens sometimes have a propagation delay 
-    # when hitting the Capacity engine vs the Workspace engine.
-    time.sleep(5) 
+    # --- STEP 2: The "Wait & Verify" Loop ---
+    # We don't just sleep; we wait until the API confirms the workspace is ready
+    ready = False
+    for _ in range(5):
+        time.sleep(3) # Wait 3 seconds per attempt
+        check = requests.get(f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'", headers=headers)
+        if check.status_code == 200 and len(check.json().get("value", [])) > 0:
+            ready = True
+            break
     
+    if not ready:
+        raise HTTPException(status_code=500, detail="Workspace created but not reachable in time.")
+
+    # --- STEP 3: Assign to Capacity ---
+    # Using the exact ID from your successful Capacity response
     assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
-    res = requests.post(assign_url, headers=headers, json={"capacityId": capacity_id})
+    assign_payload = {"capacityId": capacity_id}
+    
+    # Perform the assignment
+    res = requests.post(assign_url, headers=headers, json=assign_payload)
 
-    if res.status_code == 403:
-        # Check if the user can even see the capacity they claim to own
-        cap_check = requests.get(f"{POWERBI_API}/capacities", headers=headers)
-        if cap_check.status_code == 403:
-            detail_msg = "403: Your SSO token lacks 'Capacity.ReadWrite.All' scope. Please re-login."
-        else:
-            detail_msg = f"403: You are logged in, but not recognized as an Admin for Capacity {capacity_id}."
-        
-        raise HTTPException(status_code=403, detail=detail_msg)
-
+    # --- DEBUGGING THE 401/403 ---
     if res.status_code not in (200, 201, 202):
-        raise HTTPException(status_code=res.status_code, detail=f"Assignment Failed: {res.text}")
+        # We need to see what Power BI is actually complaining about
+        error_info = res.text
+        print(f"FAILED ASSIGNMENT: Status {res.status_code}, Body: {error_info}")
+        raise HTTPException(
+            status_code=res.status_code, 
+            detail=f"Assignment Failed. PBI Error: {error_info}"
+        )
 
     return {
-        "message": "Fabric Workspace successfully created",
+        "status": "success",
         "workspaceId": workspace_id,
-        "capacityId": capacity_id
+        "message": f"Assigned to capacity {capacity_id} (SKU: F2)"
     }
 # ------------------------------------------------------------
 # 4️⃣ ADD SERVICE PRINCIPAL TO WORKSPACE
