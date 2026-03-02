@@ -783,7 +783,7 @@ import requests
 
 from fastapi import APIRouter, Request, HTTPException, Body
 
-from app.config import POWERBI_API  # Assuming this is "https://api.powerbi.com/v1.0/myorg"
+from app.config import POWERBI_API  # e.g. "https://api.powerbi.com/v1.0/myorg"
 
 from typing import Dict
  
@@ -793,7 +793,7 @@ router = APIRouter()
 
 SP_OBJECT_ID = os.getenv("SP_OBJECT_ID", "36d789fd-926b-4106-93dc-e3928b36913e")
  
-# Modern Fabric Core API base (preferred for Fabric tenants in 2026)
+# Modern Fabric Core API (preferred for assignment in Fabric tenants)
 
 FABRIC_API = "https://api.fabric.microsoft.com/v1"
  
@@ -808,7 +808,7 @@ FABRIC_API = "https://api.fabric.microsoft.com/v1"
 
 def get_user_capacities(request: Request):
 
-    """Returns capacities the authenticated user can see/assign to."""
+    """Returns capacities visible to the authenticated user."""
 
     access_token = request.session.get("access_token")
 
@@ -837,7 +837,7 @@ def get_user_capacities(request: Request):
 
 def get_workspaces(request: Request):
 
-    """Lists all accessible workspaces enriched with reports & datasets."""
+    """Lists accessible workspaces with reports & datasets."""
 
     access_token = request.session.get("access_token")
 
@@ -876,7 +876,7 @@ def get_workspaces(request: Request):
  
 # ------------------------------------------------------------
 
-# 3️⃣ CREATE WORKSPACE + GUARANTEED CAPACITY ASSIGNMENT
+# 3️⃣ CREATE WORKSPACE + ASSIGN TO CAPACITY (Contributor-friendly)
 
 # ------------------------------------------------------------
 
@@ -886,9 +886,9 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
     """
 
-    Creates a new workspace and assigns it to the specified Fabric/Premium capacity.
+    Creates a workspace and assigns it to the selected capacity using Fabric Core API.
 
-    Handles propagation delays with retries and extended polling.
+    Works for users with Capacity Contributor + Workspace Admin (auto-granted on creation).
 
     """
 
@@ -914,9 +914,7 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
     }
  
-    # --- STEP 1: Create Workspace ---
-
-    # Use legacy Power BI endpoint for creation (Fabric create supports capacityId but may not be GA everywhere yet)
+    # --- STEP 1: Create Workspace (using legacy endpoint for reliability) ---
 
     create_res = requests.post(
 
@@ -942,21 +940,21 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
  
     workspace_id = create_res.json()["id"]
  
-    # Critical: Give service time to make the workspace assignable
+    # Give time for workspace to become fully available
 
-    time.sleep(10)  # 10–15s is often needed; adjust higher if still failing
+    time.sleep(12)  # Increased to 12s – often needed
  
-    # --- STEP 2: Assign to Capacity with exponential backoff ---
+    # --- STEP 2: Assign using Fabric Core API (supports Contributor) ---
 
     assign_success = False
 
-    assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"  # or FABRIC_API/workspaces/{workspace_id}/assignToCapacity
+    assign_url = f"{FABRIC_API}/workspaces/{workspace_id}/assignToCapacity"
  
-    for attempt in range(7):  # 0..6 → up to ~90s total backoff
+    for attempt in range(8):  # Up to ~2 min total backoff
 
         if attempt > 0:
 
-            sleep_time = 5 * (2 ** (attempt - 1))  # 5s → 10s → 20s → 40s → ...
+            sleep_time = 8 * attempt  # Progressive: 8s, 16s, 24s...
 
             time.sleep(sleep_time)
  
@@ -968,31 +966,45 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
             json={"capacityId": capacity_id},
 
-            timeout=40
+            timeout=45
 
         )
  
-        if assign_res.status_code in (200, 202):  # 202 = Accepted (async)
+        print(f"[DEBUG] Assign attempt {attempt+1}: {assign_res.status_code} - {assign_res.text[:300]}")
+ 
+        if assign_res.status_code in (200, 202):
 
             assign_success = True
 
             break
  
-        print(f"Assign attempt {attempt+1} → {assign_res.status_code}: {assign_res.text[:200]}")
- 
+        if assign_res.status_code == 403:
+
+            # Retry – sometimes transient or propagation
+
+            continue
+
         if assign_res.status_code in (401, 403):
 
             raise HTTPException(
 
                 status_code=403,
 
-                detail="Capacity assignment permission denied. Ensure user/SP is Capacity Admin/Contributor."
+                detail=(
+
+                    "Capacity assignment denied (403). "
+
+                    "Ensure: 1) You have 'Contributor' role on this capacity "
+
+                    "(check in Fabric UI: gear → Capacities → your capacity → Access/Contributors). "
+
+                    "2) You are Workspace Admin (auto after creation – verify in workspace settings → Access). "
+
+                    "Wait 15-30 min if roles changed recently. Test manual assignment in UI first."
+
+                )
 
             )
-
-        if assign_res.status_code == 404:
-
-            continue  # still propagating
  
     if not assign_success:
 
@@ -1000,17 +1012,23 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
             status_code=500,
 
-            detail=f"Capacity assignment failed after retries (last: {assign_res.status_code} - {assign_res.text[:300]})"
+            detail=(
+
+                f"Assignment failed after retries (last: {assign_res.status_code} - {assign_res.text}). "
+
+                "Common fix: Confirm Contributor role in UI and test manual workspace assignment."
+
+            )
 
         )
  
-    # --- STEP 3: Extended Polling for Verification ---
+    # --- STEP 3: Extended Polling to Verify Assignment ---
 
     verified = False
 
     expected_cap_lower = capacity_id.lower()
  
-    for poll in range(30):  # 30 × 4s = 120s max polling
+    for poll in range(35):  # ~140s max (4s × 35)
 
         time.sleep(4)
  
@@ -1032,7 +1050,7 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
                 current_cap = groups[0].get("capacityId", "").lower()
 
-                if current_cap == expected_cap_lower and current_cap:
+                if current_cap == expected_cap_lower and current_cap != "":
 
                     verified = True
 
@@ -1048,11 +1066,9 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
                 f"Workspace '{workspace_name}' (ID: {workspace_id}) created, "
 
-                f"but assignment to capacity '{capacity_id}' not confirmed after polling. "
+                f"but capacity '{capacity_id}' assignment not visible after polling. "
 
-                "Likely causes: missing Capacity Admin rights, very long propagation, "
-
-                "or tenant-specific delay. Verify manually in Fabric UI."
+                "Likely propagation delay or permissions – check in Fabric UI (Workspace settings → Capacity)."
 
             )
 
@@ -1060,7 +1076,7 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
  
     return {
 
-        "message": "Workspace created and assigned to Fabric/Premium capacity",
+        "message": "Workspace created and assigned to selected capacity",
 
         "workspaceId": workspace_id,
 
@@ -1081,7 +1097,7 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
 def add_service_principal_to_workspace(request: Request, payload: Dict = Body(...)):
 
-    """Adds the configured Service Principal as Admin to the workspace."""
+    """Adds configured Service Principal as Admin to workspace."""
 
     access_token = request.session.get("access_token")
 
@@ -1089,7 +1105,7 @@ def add_service_principal_to_workspace(request: Request, payload: Dict = Body(..
  
     if not access_token or not workspace_id:
 
-        raise HTTPException(status_code=400, detail="access_token or workspace_id missing")
+        raise HTTPException(status_code=400, detail="Missing access_token or workspace_id")
  
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
  
