@@ -121,166 +121,65 @@
 #     )
 
 
-# from fastapi import APIRouter, HTTPException, Request
-# from fastapi.responses import RedirectResponse
-# import msal
-# import urllib.parse
-# from app.config import CLIENT_ID, CLIENT_SECRET, TENANT_ID, REDIRECT_URI, POWERBI_SCOPE
-
-# router = APIRouter()
-
-# msal_app = msal.ConfidentialClientApplication(
-#     CLIENT_ID,
-#     authority=f"https://login.microsoftonline.com/{TENANT_ID}",
-#     client_credential=CLIENT_SECRET
-# )
-
-# # =========================
-# # LOGIN
-# # =========================
-# @router.get("/login")
-# def login(request: Request):
-#     request.session.clear()
-#     auth_url = msal_app.get_authorization_request_url(
-#         scopes=POWERBI_SCOPE,
-#         redirect_uri=REDIRECT_URI
-#     )
-#     return RedirectResponse(auth_url)
-
-
-# # =========================
-# # CALLBACK
-# # =========================
-# @router.get("/auth/callback")
-# def auth_callback(request: Request, code: str):
-#     token = msal_app.acquire_token_by_authorization_code(
-#         code=code,
-#         scopes=POWERBI_SCOPE,
-#         redirect_uri=REDIRECT_URI
-#     )
-
-#     if "access_token" not in token:
-#         raise HTTPException(status_code=400, detail=token)
-
-#     access_token = token["access_token"]
-#     refresh_token = token.get("refresh_token")
-
-#     request.session["access_token"] = access_token
-
-#     user_claims = token.get("id_token_claims", {})
-
-#     query_params = urllib.parse.urlencode({
-#         "name": user_claims.get("name"),
-#         "email": user_claims.get("preferred_username"),
-#         "oid": user_claims.get("oid"),
-#         "tenant": user_claims.get("tid"),
-#         "access_token": access_token,
-#         "refresh_token": refresh_token
-#     })
-
-#     return RedirectResponse(
-#         f"https://id-preview--1115fb10-6ea8-4052-8d1b-31238016c02e.lovable.app/powerbi-auth-success?{query_params}"
-#     )
-
-
 from fastapi import APIRouter, HTTPException, Request
-
 from fastapi.responses import RedirectResponse
-
 import msal
-
 import urllib.parse
-
 from app.config import CLIENT_ID, CLIENT_SECRET, TENANT_ID, REDIRECT_URI, POWERBI_SCOPE
- 
+
 router = APIRouter()
- 
+
 msal_app = msal.ConfidentialClientApplication(
-
     CLIENT_ID,
-
     authority=f"https://login.microsoftonline.com/{TENANT_ID}",
-
     client_credential=CLIENT_SECRET
-
 )
- 
-# =========================
 
+# =========================
 # LOGIN
-
 # =========================
-
 @router.get("/login")
-
 def login(request: Request):
-
     request.session.clear()
-
     auth_url = msal_app.get_authorization_request_url(
-
         scopes=POWERBI_SCOPE,
-
         redirect_uri=REDIRECT_URI
-
     )
-
     return RedirectResponse(auth_url)
- 
-# =========================
 
+
+# =========================
 # CALLBACK
-
 # =========================
-
 @router.get("/auth/callback")
-
 def auth_callback(request: Request, code: str):
-
     token = msal_app.acquire_token_by_authorization_code(
-
         code=code,
-
         scopes=POWERBI_SCOPE,
-
         redirect_uri=REDIRECT_URI
-
     )
- 
+
     if "access_token" not in token:
+        raise HTTPException(status_code=400, detail=token)
 
-        raise HTTPException(status_code=400, detail=token.get("error_description", token))
- 
     access_token = token["access_token"]
-
     refresh_token = token.get("refresh_token")
- 
-    request.session["access_token"] = access_token
- 
-    user_claims = token.get("id_token_claims", {})
- 
-    # SECURITY NOTE: Do NOT send tokens in URL in production!
 
-    # Use session/cookies or secure backend storage instead.
+    request.session["access_token"] = access_token
+
+    user_claims = token.get("id_token_claims", {})
 
     query_params = urllib.parse.urlencode({
-
         "name": user_claims.get("name"),
-
         "email": user_claims.get("preferred_username"),
-
         "oid": user_claims.get("oid"),
-
         "tenant": user_claims.get("tid"),
-
-        # "access_token": access_token,     # ← REMOVE in production
-
-        # "refresh_token": refresh_token    # ← REMOVE in production
-
+        "access_token": access_token,
+        "refresh_token": refresh_token
     })
- 
+
     return RedirectResponse(
         f"https://id-preview--1115fb10-6ea8-4052-8d1b-31238016c02e.lovable.app/powerbi-auth-success?{query_params}"
-
     )
- 
+
+
