@@ -775,6 +775,108 @@
 
 
 
+from fastapi import APIRouter, HTTPException, Request
+
+from fastapi.responses import RedirectResponse
+
+import msal
+
+import urllib.parse
+
+from app.config import CLIENT_ID, CLIENT_SECRET, TENANT_ID, REDIRECT_URI, POWERBI_SCOPE
+ 
+router = APIRouter()
+ 
+msal_app = msal.ConfidentialClientApplication(
+
+    CLIENT_ID,
+
+    authority=f"https://login.microsoftonline.com/{TENANT_ID}",
+
+    client_credential=CLIENT_SECRET
+
+)
+ 
+# =========================
+
+# LOGIN
+
+# =========================
+
+@router.get("/login")
+
+def login(request: Request):
+
+    request.session.clear()
+
+    auth_url = msal_app.get_authorization_request_url(
+
+        scopes=POWERBI_SCOPE,
+
+        redirect_uri=REDIRECT_URI
+
+    )
+
+    return RedirectResponse(auth_url)
+ 
+# =========================
+
+# CALLBACK
+
+# =========================
+
+@router.get("/auth/callback")
+
+def auth_callback(request: Request, code: str):
+
+    token = msal_app.acquire_token_by_authorization_code(
+
+        code=code,
+
+        scopes=POWERBI_SCOPE,
+
+        redirect_uri=REDIRECT_URI
+
+    )
+ 
+    if "access_token" not in token:
+
+        raise HTTPException(status_code=400, detail=token.get("error_description", token))
+ 
+    access_token = token["access_token"]
+
+    refresh_token = token.get("refresh_token")
+ 
+    request.session["access_token"] = access_token
+ 
+    user_claims = token.get("id_token_claims", {})
+ 
+    # SECURITY NOTE: Do NOT send tokens in URL in production!
+
+    # Use session/cookies or secure backend storage instead.
+
+    query_params = urllib.parse.urlencode({
+
+        "name": user_claims.get("name"),
+
+        "email": user_claims.get("preferred_username"),
+
+        "oid": user_claims.get("oid"),
+
+        "tenant": user_claims.get("tid"),
+
+        # "access_token": access_token,     # ← REMOVE in production
+
+        # "refresh_token": refresh_token    # ← REMOVE in production
+
+    })
+ 
+    return RedirectResponse(
+
+        f"https://id-preview--1115fb10-6ea8-4052-8d1b-31238016c02e.lovable.app/powerbi-auth-success?{query_pa…
+
+    )
+ 
 import os
 
 import time
@@ -783,18 +885,15 @@ import requests
 
 from fastapi import APIRouter, Request, HTTPException, Body
 
-from app.config import POWERBI_API, FABRIC_API  # Import both from your updated config
+from app.config import POWERBI_API, FABRIC_API
 
 from typing import Dict
  
 router = APIRouter()
  
-# --- CONFIGURATION ---
-
 # Service Principal Object ID (for optional SP addition)
 
 SP_OBJECT_ID = os.getenv("SP_OBJECT_ID", "36d789fd-926b-4106-93dc-e3928b36913e")
- 
  
 # ------------------------------------------------------------
 
@@ -823,7 +922,6 @@ def get_user_capacities(request: Request):
         raise HTTPException(status_code=response.status_code, detail=response.text)
  
     return response.json()
- 
  
 # ------------------------------------------------------------
 
@@ -857,20 +955,15 @@ def get_workspaces(request: Request):
 
         workspace_id = ws["id"]
  
-        # Get Reports
-
         r_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/reports", headers=headers, timeout=15)
 
         ws["reports"] = r_resp.json().get("value", []) if r_resp.status_code == 200 else []
  
-        # Get Datasets
-
         d_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/datasets", headers=headers, timeout=15)
 
         ws["datasets"] = d_resp.json().get("value", []) if d_resp.status_code == 200 else []
  
     return {"count": len(workspaces), "workspaces": workspaces}
- 
  
 # ------------------------------------------------------------
 
@@ -887,8 +980,6 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
     Creates a new workspace and assigns it to the selected Fabric/Premium capacity.
 
     Uses Fabric Core API for assignment (requires Capacity.ReadWrite.All + Workspace.ReadWrite.All scopes).
-
-    Assumes user has Capacity Contributor + auto Workspace Admin role.
 
     """
 
@@ -914,7 +1005,7 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
     }
  
-    # --- STEP 1: Create Workspace (legacy endpoint - reliable) ---
+    # STEP 1: Create Workspace
 
     create_res = requests.post(
 
@@ -940,21 +1031,19 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
  
     workspace_id = create_res.json()["id"]
  
-    # Propagation delay - critical for new workspace visibility
-
-    time.sleep(12)
+    time.sleep(12)  # Propagation delay
  
-    # --- STEP 2: Assign to Capacity (Fabric Core API - respects Contributor role with proper scopes) ---
+    # STEP 2: Assign to Capacity (Fabric Core API)
 
     assign_success = False
 
     assign_url = f"{FABRIC_API}/workspaces/{workspace_id}/assignToCapacity"
  
-    for attempt in range(8):  # Up to ~2-3 min total retry window
+    for attempt in range(8):
 
         if attempt > 0:
 
-            sleep_time = 10 * attempt  # 10s → 20s → 30s...
+            sleep_time = 10 * attempt
 
             time.sleep(sleep_time)
  
@@ -970,7 +1059,9 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
         )
  
-        print(f"[DEBUG] Assign attempt {attempt+1}: {assign_res.status_code} - {assign_res.text[:400]}")
+        print(f"[DEBUG] Assign attempt {attempt+1}: {assign_res.status_code}")
+
+        print(f"[DEBUG] Response: {assign_res.text[:800]}")  # increased for full error visibility
  
         if assign_res.status_code in (200, 202):
 
@@ -980,8 +1071,6 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
  
         if assign_res.status_code == 403:
 
-            # Possible InsufficientScopes or role issue - retry or fail with guidance
-
             if "InsufficientScopes" in assign_res.text:
 
                 raise HTTPException(
@@ -990,17 +1079,15 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
                     detail=(
 
-                        "Insufficient scopes for capacity assignment. "
+                        "Insufficient scopes. Make sure Capacity.ReadWrite.All is consented "
 
-                        "Ensure your app requests 'Capacity.ReadWrite.All' and 'Workspace.ReadWrite.All' scopes, "
-
-                        "and the user has consented. Re-login required after config update."
+                        "in Azure AD app registration. Re-login required."
 
                     )
 
                 )
 
-            continue  # Other 403s may be transient
+            continue
  
         if assign_res.status_code in (401, 403):
 
@@ -1010,13 +1097,15 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
                 detail=(
 
-                    f"Capacity assignment permission denied ({assign_res.status_code}). "
+                    f"Capacity assignment denied ({assign_res.status_code}). "
 
-                    "Check: 1) Capacity Contributor role in Fabric UI (gear → Capacities → your capacity → Access). "
+                    "Verify: 1) Capacity Contributor role in Fabric UI, "
 
-                    "2) Workspace Admin role (auto on creation - verify in workspace settings → Access). "
+                    "2) Workspace Admin role on new workspace, "
 
-                    "Test manual assignment in fabric.microsoft.com first."
+                    "3) Consent for Capacity.ReadWrite.All. "
+
+                    "Test manually in fabric.microsoft.com."
 
                 )
 
@@ -1030,23 +1119,23 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
             detail=(
 
-                f"Capacity assignment failed after retries (last status: {assign_res.status_code}). "
+                f"Assignment failed after retries (last: {assign_res.status_code}). "
 
                 f"Response: {assign_res.text}. "
 
-                "Common fixes: Confirm scopes in token (jwt.ms), Contributor role, or try legacy endpoint fallback."
+                "Check token scopes at jwt.ms and Contributor role."
 
             )
 
         )
  
-    # --- STEP 3: Verification Polling (check capacityId updated) ---
+    # STEP 3: Verification Polling
 
     verified = False
 
     expected_cap_lower = capacity_id.lower()
  
-    for poll in range(40):  # ~160s max polling
+    for poll in range(40):
 
         time.sleep(4)
  
@@ -1082,11 +1171,11 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
             detail=(
 
-                f"Workspace '{workspace_name}' (ID: {workspace_id}) created successfully, "
+                f"Workspace '{workspace_name}' created (ID: {workspace_id}), "
 
-                f"but capacity assignment to '{capacity_id}' not confirmed after polling. "
+                f"but capacity '{capacity_id}' assignment not confirmed. "
 
-                "Check in Fabric UI (Workspace settings → Capacity). May be propagation delay."
+                "Check in Fabric UI. Possible propagation delay."
 
             )
 
@@ -1094,7 +1183,7 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
  
     return {
 
-        "message": "Workspace successfully created and assigned to selected capacity",
+        "message": "Workspace successfully created and assigned",
 
         "workspaceId": workspace_id,
 
@@ -1103,7 +1192,6 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
         "capacityId": capacity_id
 
     }
- 
  
 # ------------------------------------------------------------
 
@@ -1115,7 +1203,7 @@ def create_workspace_with_capacity(request: Request, payload: Dict = Body(...)):
 
 def add_service_principal_to_workspace(request: Request, payload: Dict = Body(...)):
 
-    """Adds the configured Service Principal as Admin to the workspace."""
+    """Adds configured Service Principal as Admin to workspace."""
 
     access_token = request.session.get("access_token")
 

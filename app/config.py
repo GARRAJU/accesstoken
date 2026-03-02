@@ -39,36 +39,45 @@ BLOB_CONTAINER = os.getenv("BLOB_CONTAINER")
 
 EMPTY_PBIX_NAME = os.getenv("EMPTY_PBIX_NAME")
  
-# Updated scopes – includes legacy Power BI + required Fabric Core scopes for capacity assignment
+# ────────────────────────────────────────────────────────────────
 
-# POWERBI_SCOPE = [
+# FIXED: Specific scopes only – NO .default to avoid AADSTS70011
 
-#     "https://analysis.windows.net/powerbi/api/.default",  # Legacy Power BI REST API (keep for other calls)
+# These match your app registration + required for capacity assignment
 
-#     "Capacity.ReadWrite.All",                             # Required for assign workspace to capacity
-
-#     "Workspace.ReadWrite.All"                             # Required for workspace read/write operations
-
-# ]
-# --- FIXED SCOPES ---
-# We remove ".default" and use the full URL for the specific scopes.
-# This ensures the token is valid for both Power BI and Fabric assignment.
+# ────────────────────────────────────────────────────────────────
 
 POWERBI_SCOPE = [
-    "https://analysis.windows.net/powerbi/api/Capacity.ReadWrite.All",
-    "https://analysis.windows.net/powerbi/api/Workspace.ReadWrite.All",
-    "https://analysis.windows.net/powerbi/api/Report.ReadWrite.All", # Added for your /workspaces GET call
-    "https://analysis.windows.net/powerbi/api/Dataset.ReadWrite.All", # Added for your /workspaces GET call
-    "openid",
-    "profile",
-    "offline_access"
+
+    "Capacity.ReadWrite.All",           # Required for assignToCapacity
+
+    "Workspace.ReadWrite.All",          # Required for workspace create/read/write
+
+    "Capacity.Read.All",                # View capacities list
+
+    "Dataset.ReadWrite.All",
+
+    "Report.ReadWrite.All",
+
+    "Dashboard.ReadWrite.All",
+
+    "Content.Create",
+
+    "Item.ReadWrite.All",
+
+    "Connection.Read.All",
+
+    "Workspace.GitCommit.All",
+
+    "Workspace.GitUpdate.All",
+
+    # Add more only if your app actually uses them
+
 ]
  
-# Legacy Power BI API base (used for create workspace, list capacities, etc.)
+# API bases
 
 POWERBI_API = "https://api.powerbi.com/v1.0/myorg"
- 
-# Modern Fabric Core API base (used specifically for assignToCapacity)
 
-FABRIC_API = "https://api.fabric.microsoft.com/v1"
+FABRIC_API  = "https://api.fabric.microsoft.com/v1"
  
