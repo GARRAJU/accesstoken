@@ -1056,6 +1056,43 @@ router = APIRouter()
 # This is the Object ID of the Service Principal you want to add to workspaces
 SP_OBJECT_ID = os.getenv("SP_OBJECT_ID", "36d789fd-926b-4106-93dc-e3928b36913e")
 
+# Service Principal credentials for API calls (especially refresh schedule update)
+# Set these in your environment / .env file
+POWERBI_CLIENT_ID = os.getenv("CLIENT_ID")
+POWERBI_CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+POWERBI_TENANT_ID = os.getenv("TENANT_ID")
+
+# ------------------------------------------------------------
+# Helper: Get Service Principal access token (client credentials flow)
+# ------------------------------------------------------------
+def get_sp_access_token():
+    if not all([POWERBI_CLIENT_ID, POWERBI_CLIENT_SECRET, POWERBI_TENANT_ID]):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Service Principal credentials not set. Please configure these environment variables: "
+                "POWERBI_CLIENT_ID, POWERBI_CLIENT_SECRET, POWERBI_TENANT_ID"
+            )
+        )
+
+    token_url = f"https://login.microsoftonline.com/{POWERBI_TENANT_ID}/oauth2/v2.0/token"
+    data = {
+        "grant_type": "client_credentials",
+        "client_id": POWERBI_CLIENT_ID,
+        "client_secret": POWERBI_CLIENT_SECRET,
+        "scope": "https://analysis.windows.net/powerbi/api/.default"
+    }
+
+    try:
+        resp = requests.post(token_url, data=data, timeout=10)
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+    except requests.RequestException as e:
+        error_detail = e.response.text if hasattr(e, "response") and e.response else str(e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to acquire service principal token: {error_detail}"
+        )
 
 # ------------------------------------------------------------
 # 1️⃣ GET USER CAPACITIES
@@ -1074,7 +1111,6 @@ def get_user_capacities(request: Request):
         raise HTTPException(status_code=response.status_code, detail=response.text)
     return response.json()
 
-
 # ------------------------------------------------------------
 # 2️⃣ GET WORKSPACES (WITH ENRICHED DATA)
 # ------------------------------------------------------------
@@ -1084,30 +1120,29 @@ def get_workspaces(request: Request):
     if not access_token:
         raise HTTPException(status_code=401, detail="Not logged in")
     headers = {"Authorization": f"Bearer {access_token}"}
-  
+ 
     # Fetch all workspaces (groups) the user has access to
     ws_resp = requests.get(f"{POWERBI_API}/groups", headers=headers, timeout=30)
     if ws_resp.status_code != 200:
         raise HTTPException(status_code=ws_resp.status_code, detail=ws_resp.text)
     workspaces = ws_resp.json().get("value", [])
-  
+ 
     # Enrich each workspace with its associated Reports and Datasets
     for ws in workspaces:
         workspace_id = ws["id"]
-      
+     
         # Get Reports
         r_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/reports", headers=headers, timeout=15)
         ws["reports"] = r_resp.json().get("value", []) if r_resp.status_code == 200 else []
-      
+     
         # Get Datasets
         d_resp = requests.get(f"{POWERBI_API}/groups/{workspace_id}/datasets", headers=headers, timeout=15)
         ws["datasets"] = d_resp.json().get("value", []) if d_resp.status_code == 200 else []
-  
+ 
     return {
         "count": len(workspaces),
         "workspaces": workspaces
     }
-
 
 # ------------------------------------------------------------
 # 3️⃣ CREATE WORKSPACE + GUARANTEED CAPACITY ASSIGNMENT
@@ -1117,18 +1152,18 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
     access_token = request.session.get("access_token")
     if not access_token:
         raise HTTPException(status_code=401, detail="Not logged in")
-  
+ 
     workspace_name = payload.get("workspace_name")
     capacity_id = payload.get("capacity_id")
-  
+ 
     if not workspace_name or not capacity_id:
         raise HTTPException(status_code=400, detail="workspace_name and capacity_id are required")
-  
+ 
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
-  
+ 
     # --- STEP 1: Create Workspace ---
     create_res = requests.post(
         f"{POWERBI_API}/groups?workspaceV2=true",
@@ -1138,18 +1173,18 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
     )
     if create_res.status_code not in (200, 201):
         raise HTTPException(status_code=create_res.status_code, detail=create_res.text)
-  
+ 
     workspace_id = create_res.json()["id"]
-  
+ 
     # --- STEP 2: Assign to Capacity (Retry Logic) ---
     assigned_successfully = False
     for attempt in range(3):
         time.sleep(2) # Give Azure time to propagate the new group
-      
+     
         # Try AssignToCapacity Action
         assign_url = f"{POWERBI_API}/groups/{workspace_id}/AssignToCapacity"
         res = requests.post(assign_url, headers=headers, json={"capacityId": capacity_id}, timeout=30)
-      
+     
         # Fallback to PATCH if POST isn't supported by the tenant configuration
         if res.status_code not in (200, 201, 202):
             res = requests.patch(
@@ -1158,11 +1193,11 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
                 json={"capacityId": capacity_id},
                 timeout=30
             )
-      
+     
         if res.status_code in (200, 201, 202):
             assigned_successfully = True
             break
-  
+ 
     # --- STEP 3: Verification Polling ---
     is_verified = False
     for i in range(5):
@@ -1172,7 +1207,7 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
             f"{POWERBI_API}/groups?$filter=id eq '{workspace_id}'",
             headers=headers
         )
-      
+     
         if verify_res.status_code == 200:
             val = verify_res.json().get("value", [])
             if val:
@@ -1180,20 +1215,19 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
                 if current_cap == capacity_id.lower():
                     is_verified = True
                     break
-  
+ 
     if not is_verified:
         raise HTTPException(
             status_code=500,
             detail=f"Workspace created, but capacity assignment timed out. Ensure the user is a 'Capacity Admin' for: {capacity_id}"
         )
-  
+ 
     return {
         "message": "Workspace successfully assigned to Fabric capacity",
         "workspaceId": workspace_id,
         "workspaceName": workspace_name,
         "capacityId": capacity_id
     }
-
 
 # ------------------------------------------------------------
 # 4️⃣ ADD SERVICE PRINCIPAL TO WORKSPACE
@@ -1202,29 +1236,28 @@ def create_workspace_with_capacity(request: Request, payload: dict = Body(...)):
 def add_service_principal_to_workspace(request: Request, payload: dict = Body(...)):
     access_token = request.session.get("access_token")
     workspace_id = payload.get("workspace_id")
-  
+ 
     if not access_token or not workspace_id:
         raise HTTPException(status_code=400, detail="Missing parameters")
-  
+ 
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-  
+ 
     add_payload = {
         "identifier": SP_OBJECT_ID,
         "principalType": "App",
         "groupUserAccessRight": "Admin"
     }
-  
+ 
     resp = requests.post(
         f"{POWERBI_API}/groups/{workspace_id}/users",
         headers=headers,
         json=add_payload
     )
-  
+ 
     if resp.status_code in (200, 201, 204):
         return {"status": "success", "message": "Service Principal added as Admin"}
-      
+     
     raise HTTPException(status_code=resp.status_code, detail=resp.text)
-
 
 # ------------------------------------------------------------
 # 5️⃣ TRIGGER ON-DEMAND REFRESH FOR SEMANTIC MODEL (DATASET)
@@ -1239,32 +1272,31 @@ def trigger_dataset_refresh(
     access_token = request.session.get("access_token")
     if not access_token:
         raise HTTPException(status_code=401, detail="Not logged in")
-  
+ 
     if not workspace_id:
         raise HTTPException(status_code=400, detail="workspace_id is required (query parameter)")
-  
+ 
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
-  
+ 
     refresh_url = f"{POWERBI_API}/groups/{workspace_id}/datasets/{dataset_id}/refreshes"
-  
+ 
     # Default to simple full refresh if no body provided
     body = payload if payload else {}
-  
+ 
     response = requests.post(refresh_url, headers=headers, json=body, timeout=30)
-  
+ 
     if response.status_code not in (200, 202):
         raise HTTPException(status_code=response.status_code, detail=response.text)
-  
+ 
     return {
         "message": "Refresh triggered successfully (asynchronous operation)",
         "dataset_id": dataset_id,
         "workspace_id": workspace_id,
         "status_code": response.status_code
     }
-
 
 # ------------------------------------------------------------
 # 6️⃣ GET REFRESH HISTORY
@@ -1279,19 +1311,19 @@ def get_dataset_refresh_history(
     access_token = request.session.get("access_token")
     if not access_token:
         raise HTTPException(status_code=401, detail="Not logged in")
-  
+ 
     if not workspace_id:
         raise HTTPException(status_code=400, detail="workspace_id is required")
-  
+ 
     headers = {"Authorization": f"Bearer {access_token}"}
-  
+ 
     history_url = f"{POWERBI_API}/groups/{workspace_id}/datasets/{dataset_id}/refreshes?$top={top}"
-  
+ 
     response = requests.get(history_url, headers=headers, timeout=15)
-  
+ 
     if response.status_code != 200:
         raise HTTPException(status_code=response.status_code, detail=response.text)
-  
+ 
     data = response.json()
     return {
         "dataset_id": dataset_id,
@@ -1300,9 +1332,8 @@ def get_dataset_refresh_history(
         "count_returned": len(data.get("value", []))
     }
 
-
 # ------------------------------------------------------------
-# 7️⃣ UPDATE / SET REFRESH SCHEDULE   ← FIXED
+# 7️⃣ UPDATE / SET REFRESH SCHEDULE ← NOW USING SERVICE PRINCIPAL TOKEN
 # ------------------------------------------------------------
 @router.patch("/datasets/{dataset_id}/refresh-schedule")
 def update_refresh_schedule(
@@ -1312,7 +1343,9 @@ def update_refresh_schedule(
     payload: dict = Body(...)
 ):
     """
-    Updates the scheduled refresh for a dataset.
+    Updates the scheduled refresh for a dataset using SERVICE PRINCIPAL token.
+    This avoids the "This operation is only supported for the dataset owner" error
+    when the dataset is owned by the service principal (after SP publish/push).
 
     Correct payload format (send this from frontend):
     {
@@ -1320,9 +1353,7 @@ def update_refresh_schedule(
         "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
         "times": ["08:00", "18:00"],
         "timeZone": "UTC"
-        // notifyOption is forced to "NoNotification" - mail removed as requested
     }
-
     Or minimal (daily at 07:30 UTC):
     {
         "enabled": true,
@@ -1331,17 +1362,13 @@ def update_refresh_schedule(
     }
 
     Notes:
-    - times: HH:MM in 24-hour format (e.g. "07:00", "23:30")
+    - times: HH:MM in 24-hour format
+    - Service principal forces "NoNotification"
     - Max 48 times/day in Premium, 8 in non-Premium
-    - days: optional if using simple daily refresh
+    - days: optional for daily refresh
     """
-    access_token = request.session.get("access_token")
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Not logged in")
-
     if not workspace_id:
         raise HTTPException(status_code=400, detail="workspace_id is required")
-
     if not payload:
         raise HTTPException(status_code=400, detail="Request body is required")
 
@@ -1349,11 +1376,14 @@ def update_refresh_schedule(
     if "timeZone" in payload:
         payload["localTimeZoneId"] = payload.pop("timeZone")
 
-    # Force no email notifications (as per your request)
+    # Force no notifications (SP only supports this)
     payload["notifyOption"] = "NoNotification"
 
-    # Required wrapper for Power BI API
+    # API wrapper
     body_for_api = {"value": payload}
+
+    # Use service principal token
+    access_token = get_sp_access_token()
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -1369,10 +1399,10 @@ def update_refresh_schedule(
             json=body_for_api,
             timeout=15
         )
-        response.raise_for_status()  # Raises for 4xx/5xx
+        response.raise_for_status()
     except requests.RequestException as e:
-        detail = getattr(e.response, "text", str(e)) if hasattr(e, "response") else str(e)
-        raise HTTPException(status_code=502, detail=f"Power BI API connection failed: {detail}")
+        detail = e.response.text if hasattr(e, "response") and e.response else str(e)
+        raise HTTPException(status_code=502, detail=f"Power BI API failed: {detail}")
 
     if response.status_code not in (200, 202):
         raise HTTPException(
@@ -1381,15 +1411,14 @@ def update_refresh_schedule(
         )
 
     return {
-        "message": "Refresh schedule updated successfully",
+        "message": "Refresh schedule updated successfully (via service principal)",
         "dataset_id": dataset_id,
         "workspace_id": workspace_id,
-        "sent_payload": body_for_api   # ← very useful when debugging!
+        "sent_payload": body_for_api
     }
 
-
 # ------------------------------------------------------------
-# 8️⃣ GET CURRENT REFRESH SCHEDULE   ← IMPROVED
+# 8️⃣ GET CURRENT REFRESH SCHEDULE ← UNCHANGED
 # ------------------------------------------------------------
 @router.get("/datasets/{dataset_id}/refresh-schedule")
 def get_refresh_schedule(
@@ -1400,29 +1429,22 @@ def get_refresh_schedule(
     access_token = request.session.get("access_token")
     if not access_token:
         raise HTTPException(status_code=401, detail="Not logged in")
-
     if not workspace_id:
         raise HTTPException(status_code=400, detail="workspace_id is required")
-
     headers = {"Authorization": f"Bearer {access_token}"}
-
     schedule_url = f"{POWERBI_API}/groups/{workspace_id}/datasets/{dataset_id}/refreshSchedule"
-
     try:
         response = requests.get(schedule_url, headers=headers, timeout=15)
         response.raise_for_status()
     except requests.RequestException as e:
         detail = getattr(e.response, "text", str(e)) if hasattr(e, "response") else str(e)
         raise HTTPException(status_code=502, detail=f"Failed to reach Power BI: {detail}")
-
     data = response.json()
-
     # Make response friendlier: rename localTimeZoneId → timeZone
     if isinstance(data, dict) and "value" in data:
         schedule = data["value"]
         if "localTimeZoneId" in schedule:
             schedule["timeZone"] = schedule.pop("localTimeZoneId")
         return schedule
-
     # Fallback: return raw if structure is unexpected
     return data
