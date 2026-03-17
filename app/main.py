@@ -15,6 +15,7 @@ app.add_middleware(
         "https://1115fb10-6ea8-4052-8d1b-31238016c02e.lovableproject.com",
         "https://lovable.dev",
         "https://id-preview--1115fb10-6ea8-4052-8d1b-31238016c02e.lovable.app",
+        "https://reportmigration-frontend-g9ceape5ddgxa5gq.eastus-01.azurewebsites.net",
     ],
     allow_credentials=True,
     allow_methods=["*"],
