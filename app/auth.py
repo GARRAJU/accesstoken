@@ -174,8 +174,7 @@ def auth_callback(request: Request, code: str):
         "email": user_claims.get("preferred_username"),
         "oid": user_claims.get("oid"),
         "tenant": user_claims.get("tid"),
-        "access_token": access_token,
-        "refresh_token": refresh_token
+        "access_token": access_token
     })
 
     return RedirectResponse(
