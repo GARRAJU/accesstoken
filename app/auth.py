@@ -181,7 +181,7 @@ def auth_callback(request: Request, code: str):
         # f"https://id-preview--1115fb10-6ea8-4052-8d1b-31238016c02e.lovable.app/powerbi-auth-success?{query_params}"
         # f"https://reportmigration-frontend-g9ceape5ddgxa5gq.eastus-01.azurewebsites.net/powerbi-auth-success?{query_params}"
         # f"https://frame-frontend-test-dsbeb3g9chb0emeg.eastus-01.azurewebsites.net/powerbi-auth-success?{query_params}"
-        f"http://localhost:8000/powerbi-auth-success?{query_params}"    
+        f"http://localhost:8080/powerbi-auth-success?{query_params}"    
     )
 
 
